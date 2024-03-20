@@ -129,26 +129,15 @@ def export_to_excel(cost_analysis, filename, estimated_costs, third_person_sites
 def main():
     st.title("Construction cost tool - Project delivery group")
     file_info = [
-        ("Group C",
-         "https://www.dropbox.com/scl/fi/d66774vj4qrwnywmh6njb/Group-C.xlsx?dl=1&rlkey=f4tkvvx1zvzguqmo7yfspvpxf", 14,
-         2022),
+        
         ("Group D",
-         "https://www.dropbox.com/scl/fi/4ek2pm7gcvtbcygap1jja/Group-D.xlsx?dl=1&rlkey=rv86x5fbhk7kr2n3cmd96u1i2", 11,
+         "https://www.dropbox.com/scl/fi/bsq8j9d12p1elutxx0btu/SW-92-Bid-Analysis.xlsx?rlkey=vaiv7ea9o4tl3hwbjngy0w40m&dl=1", 1,
          2022),
         ("Group E",
-         "https://www.dropbox.com/scl/fi/mgy696s4mb73dok3qjyav/Group-E.xlsx?dl=1&rlkey=vnr922cc30p07vkaanexbf9yu", 7,
+         "https://www.dropbox.com/scl/fi/ktvg2uujg69g4q1nrve4k/SW-93-Bid-Analysis.xlsx?rlkey=zvfd46w89ob76cgahpmm635oa&dl=1", 1,
          2023),
         ("Group F",
-         "https://www.dropbox.com/scl/fi/7wcxa245a7y93b3ih1kvv/Group-F.xlsx?dl=1&rlkey=axsgio64xuvgsk4cdjfifbfnh", 7,
-         2023),
-        ("Group G",
-         "https://www.dropbox.com/scl/fi/wxx4koi1e880a15wrdd0i/Group-G.xlsx?dl=1&rlkey=w5z8wh85ncc5yijq291p90vac", 7,
-         2024),
-        ("Group H",
-         "https://www.dropbox.com/scl/fi/0ytw64w5hliaeo6quxz3s/Group-H.xlsx?dl=1&rlkey=np616vwahrly24i8f5szpcw7m", 11,
-         2024),
-        ("Group I",
-         "https://www.dropbox.com/scl/fi/v6nkaax417lfyyxjc0urh/Group-I.xlsx?dl=1&rlkey=tunv48mloyl4bg7m6631lwn0s", 8,
+         "https://www.dropbox.com/scl/fi/5rs8r52izj18r24s91jpu/SW-94-Bid-Analysis-revised.xlsx?rlkey=e09icb3r7p5ab1r8wetk05k4x&dl=1", 1,
          2024)
     ]
 
