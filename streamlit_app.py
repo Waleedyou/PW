@@ -1,211 +1,447 @@
 import streamlit as st
 import pandas as pd
-import base64
-import io
-from datetime import datetime
-import requests
-from io import BytesIO
-import openpyxl
+import altair as alt
+import folium
+from streamlit_folium import st_folium
 
-# Inflation rates
-inflation_rates = {
-    2019: 1.8,
-    2020: 1.2,
-    2021: 1.8,
-    2022: 6.5,
-    2023: 4.1,
-    2024: 3.1,
-}
+# -------------------------------------------------------------------------
+# 1) Page Setup: White background, custom title
+# -------------------------------------------------------------------------
+st.set_page_config(
+    page_title="Project Delivery Group - GoTriangle Bus Stop Improvement Program",
+    layout="wide"
+)
 
-# Decorator to cache downloaded files
-@st.cache_data()
-def download_file(url):
-    response = requests.get(url)
-    return BytesIO(response.content)
-
-# Decorator to cache data loading and preparation
-@st.cache_data()
-def load_and_prepare_data(file_info):
-    dataframes = {}
-    for group, url, num_sites, year in file_info:
-        excel_io = download_file(url)
-        df = pd.read_excel(excel_io)
-        if 'Item' in df.columns and 'Units' in df.columns:
-            df.set_index('Item', inplace=True)
-            for col in df.columns:
-                if df[col].dtype in ['float64', 'int64'] and col != 'Units':
-                    df[col] = df[col].apply(lambda x: adjust_for_inflation(x, year))
-        dataframes[group] = (df, num_sites)
-    return dataframes
-
-# Adjust for inflation function
-@st.cache_data()
-def adjust_for_inflation(amount, from_year, to_year=datetime.now().year):
-    if from_year == to_year:
-        return amount
-    inflation_factor = 1
-    if from_year < to_year:
-        for year in range(from_year, to_year):
-            inflation_factor *= 1 + inflation_rates.get(year, 0) / 100
-    else:
-        for year in range(to_year, from_year, -1):
-            inflation_factor /= 1 + inflation_rates.get(year - 1, 0) / 100
-    return amount * inflation_factor
-
-# Compare costs function
-@st.cache_data()
-def compare_costs(dataframes, column_type="Unit Price"):
-    comparison_results = pd.DataFrame()
-    for filename, (df, _) in dataframes.items():
-        relevant_columns = [col for col in df.columns if column_type in col and col != 'Units']
-        for column in relevant_columns:
-            comparison_results[f'{filename} - {column}'] = df[column]
-        if 'Units' in df.columns:
-            comparison_results[f'{filename} - Units'] = df['Units']
-    return comparison_results
-
-# Safe convert to float function
-@st.cache_data()
-def safe_convert_to_float(value):
-    try:
-        return float(value.replace('$', '').replace(',', ''))
-    except ValueError:
-        return None
-
-# Perform cost analysis function
-@st.cache_data()
-def perform_cost_analysis(comparison_df, project_counts, selected_item):
-    analysis_summary = {}
-    item_data = comparison_df.loc[[selected_item]]
-    numeric_data = item_data.select_dtypes(include=[float, int])
-    if not numeric_data.empty:
-        adjusted_costs = {}
-        for column in numeric_data.columns:
-            project_count = project_counts.get(column.split(" - ")[0], 1)
-            unit_type = comparison_df.loc[selected_item, f"{column.split(' - ')[0]} - Units"]
-            if unit_type == "LS":
-                adjusted_costs[column] = numeric_data[column] / project_count
-            elif unit_type in ["EA", "SF", "LF"]:
-                adjusted_costs[column] = numeric_data[column]
-            else:
-                adjusted_costs[column] = numeric_data[column] * project_count
-        adjusted_df = pd.DataFrame(adjusted_costs)
-        lowest_cost = adjusted_df.min().min()
-        highest_cost = adjusted_df.max().max()
-        average_cost = adjusted_df.mean().mean()
-        analysis_summary[selected_item] = {
-            'Units': comparison_df.loc[selected_item, comparison_df.columns.str.contains('- Units')].iloc[0],
-            'Lowest Cost': f"${lowest_cost:.2f}",
-            'Highest Cost': f"${highest_cost:.2f}",
-            'Average Cost': f"${average_cost:.2f}",
-        }
-    else:
-        analysis_summary[selected_item] = {
-            'Units': "N/A",
-            'Lowest Cost': "N/A",
-            'Highest Cost': "N/A",
-            'Average Cost': "N/A",
-        }
-    return analysis_summary
-
-# Export to Excel function
-@st.cache_data()
-def export_to_excel(cost_analysis, filename, estimated_costs, third_person_sites, selected_item):
-    summary_df = pd.DataFrame.from_dict(cost_analysis, orient='index').reset_index().rename(columns={'index': 'Item'})
-    estimated_costs_df = pd.DataFrame({
-        'Item': [f'Estimated Costs for {third_person_sites} sites ({selected_item})'],
-        'Lowest Cost': [f'${estimated_costs[0]:.2f}'],
-        'Highest Cost': [f'${estimated_costs[1]:.2f}'],
-        'Average Cost': [f'${estimated_costs[2]:.2f}'],
-        'Units': [cost_analysis[selected_item]['Units']]
-    })
-    summary_df = pd.concat([summary_df, estimated_costs_df], ignore_index=True)
-    excel_bytes_io = io.BytesIO()
-    with pd.ExcelWriter(excel_bytes_io, engine="xlsxwriter") as writer:
-        summary_df.to_excel(writer, sheet_name="Cost Analysis", index=False)
-    return excel_bytes_io.getvalue()
-
-# Main app function
-def main():
-    st.title("Construction cost tool - Project delivery group")
-    file_info = [
-        
-        ("Group D",
-         "https://www.dropbox.com/scl/fi/bsq8j9d12p1elutxx0btu/SW-92-Bid-Analysis.xlsx?rlkey=vaiv7ea9o4tl3hwbjngy0w40m&dl=1", 1,
-         2022),
-        ("Group E",
-         "https://www.dropbox.com/scl/fi/ktvg2uujg69g4q1nrve4k/SW-93-Bid-Analysis.xlsx?rlkey=zvfd46w89ob76cgahpmm635oa&dl=1", 1,
-         2023),
-        ("Group F",
-         "https://www.dropbox.com/scl/fi/5rs8r52izj18r24s91jpu/SW-94-Bid-Analysis-revised.xlsx?rlkey=e09icb3r7p5ab1r8wetk05k4x&dl=1", 1,
-         2024)
-    ]
-
-    # Load data from Dropbox links
-    dataframes = load_and_prepare_data(file_info)
-
-    # UI for selecting items for analysis
-    all_items = set()
-    for df, _ in dataframes.values():
-        all_items.update(df.index.tolist())
-
-    selected_item = st.selectbox("Select an item for analysis", options=sorted(list(all_items)))
-
-    # UI for displaying cost analysis
-    project_counts = {}
-    for filename, (_, num_sites) in dataframes.items():
-        project_counts[filename] = num_sites
-
-    comparison_df = compare_costs(dataframes, "Unit Price")
-    cost_analysis = perform_cost_analysis(comparison_df, project_counts, selected_item)
-    st.write(f"Cost Analysis Results for {selected_item}:")
-    displayed_df = pd.DataFrame.from_dict(cost_analysis, orient='index').reset_index().rename(columns={'index': 'Item'})
-    st.dataframe(displayed_df)
-
-    # Additional UI components for estimating future costs
-    third_person_sites = st.number_input("Enter the number of sites for the new project", min_value=1, value=1)
-    future_year = st.number_input("Enter a future year for cost projection", min_value=datetime.now().year,
-                                  max_value=2050, value=datetime.now().year + 1)
-    quantity = st.number_input("Enter the quantity for the cost projection", min_value=1, value=1, key='quantity')
-
-    if selected_item in cost_analysis:
-        item_analysis = cost_analysis[selected_item]
-        lowest_cost_per_site = safe_convert_to_float(item_analysis['Lowest Cost'])
-        highest_cost_per_site = safe_convert_to_float(item_analysis['Highest Cost'])
-        average_cost_per_site = safe_convert_to_float(item_analysis['Average Cost'])
-
-        future_costs = [adjust_for_inflation(cost * third_person_sites * quantity, datetime.now().year, future_year) for
-                        cost in [lowest_cost_per_site, highest_cost_per_site, average_cost_per_site] if
-                        cost is not None]
-        st.markdown(
-            f"**Projected total costs for {future_year}** (Lowest, Highest, Average): `${future_costs[0]:.2f}`, `${future_costs[1]:.2f}`, `${future_costs[2]:.2f}`")
-
-        excel_data = export_to_excel(cost_analysis, "cost_analysis.xlsx", future_costs, third_person_sites,
-                                     selected_item)
-        st.download_button(label="Download Excel file", data=excel_data, file_name="cost_analysis.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-
-if __name__ == "__main__":
-    # Background style
-    page_bg_img = f"""
+# Force a white background, black text, and highlight the image expand icon
+st.markdown("""
     <style>
-    [data-testid="stAppViewContainer"] > .main {{
-        background-image: url("https://www.tripsavvy.com/thmb/JsEg4Eew-1-1UdNOnY_HDPA8P98=/2121x1414/filters:fill(auto,1)/GettyImages-513714245-3a40f1e3b5bf4de88289009ffed82933.jpg");
-        background-size: cover;
-        background-position: center;
-        background-repeat: no-repeat;
-        background-attachment: fixed;
-    }}
-    [data-testid="stSidebar"] > div:first-child {{
-        background: rgba(255, 255, 255, 0.5);
-        backdrop-filter: blur(10px);
-    }}
-    [data-testid="stHeader"], [data-testid="stToolbar"] {{
-        background: rgba(0,0,0,0);
-    }}
+    .main, .block-container {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+    }
+    button[data-testid="stImageExpandButton"] {
+        background-color: yellow !important;
+        border: 2px solid red !important;
+        color: black !important;
+    }
     </style>
-    """
-    st.markdown(page_bg_img, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-    main()
+# -------------------------------------------------------------------------
+# 2) Load Excel from Dropbox, auto-detect header row (CACHED)
+# -------------------------------------------------------------------------
+excel_url = "https://www.dropbox.com/scl/fi/y9e6id2kf1o9j3r0rnsqu/Group-C-H.xlsx?rlkey=i8fh3z6bxmczoa53myi9wgk7c&st=ke57by4o&dl=1"
+
+@st.cache_data  # <-- This decorator enables caching for data
+def load_excel_with_auto_header(url):
+    for potential_header in range(6):
+        df_try = pd.read_excel(url, engine="openpyxl", header=potential_header)
+        df_try.columns = [col.strip() for col in df_try.columns]
+        if "West [X]" in df_try.columns and "North [Y]" in df_try.columns:
+            df_try["West [X]"] = pd.to_numeric(df_try["West [X]"], errors="coerce")
+            df_try["North [Y]"] = pd.to_numeric(df_try["North [Y]"], errors="coerce")
+            return df_try
+    raise ValueError("Could not find 'West [X]' and 'North [Y]' in any header row (0..5).")
+
+df = load_excel_with_auto_header(excel_url)
+
+# -------------------------------------------------------------------------
+# 3) Detect status column, fallback if not found
+# -------------------------------------------------------------------------
+def find_status_column(df):
+    for col in df.columns:
+        if "status" in col.lower() or "non-compliant" in col.lower():
+            return col
+    return None
+
+status_col = find_status_column(df)
+if not status_col:
+    status_col = "Unknown Status"
+    df[status_col] = "Unknown"
+
+# -------------------------------------------------------------------------
+# 4) Marker color logic for map
+# -------------------------------------------------------------------------
+def get_marker_color(status_value):
+    if not isinstance(status_value, str):
+        return "blue"
+    s_lower = status_value.lower()
+    if "non-compliant" in s_lower:
+        return "red"
+    elif "incomplete" in s_lower:
+        return "orange"
+    elif "in construction" in s_lower:
+        return "blue"
+    else:
+        return "green"
+
+# -------------------------------------------------------------------------
+# 5) Functions to create maps using different base map styles
+# -------------------------------------------------------------------------
+def create_map_osm(df, status_col):
+    if df.empty:
+        return folium.Map(location=[37.0, -95.0], zoom_start=4, tiles="OpenStreetMap")
+    df = df.dropna(subset=["West [X]", "North [Y]"]).copy()
+    df["Longitude"] = -df["West [X]"]
+    df["Latitude"]  = df["North [Y]"]
+    avg_lat = df["Latitude"].mean()
+    avg_lon = df["Longitude"].mean()
+
+    folium_map = folium.Map(location=[avg_lat, avg_lon], zoom_start=12, tiles="OpenStreetMap")
+    for _, row in df.iterrows():
+        lat = row["Latitude"]
+        lon = row["Longitude"]
+        stop_name = row.get("Stop Name", "Unknown Stop")
+        bus_id = row.get("Bus stop Number", "N/A")
+        status_val = row.get(status_col, "Unknown")
+
+        popup_html = f"""
+        <b>Stop Name:</b> {stop_name}<br>
+        <b>Bus stop Number:</b> {bus_id}<br>
+        <b>Status:</b> {status_val}
+        """
+        folium.Marker(
+            location=[lat, lon],
+            popup=popup_html,
+            tooltip=f"Bus ID: {bus_id}",
+            icon=folium.Icon(color=get_marker_color(status_val), icon="bus", prefix="fa")
+        ).add_to(folium_map)
+    return folium_map
+
+def create_map_cartodb(df, status_col):
+    if df.empty:
+        return folium.Map(location=[37.0, -95.0], zoom_start=4, tiles="CartoDB positron")
+    df = df.dropna(subset=["West [X]", "North [Y]"]).copy()
+    df["Longitude"] = -df["West [X]"]
+    df["Latitude"]  = df["North [Y]"]
+    avg_lat = df["Latitude"].mean()
+    avg_lon = df["Longitude"].mean()
+
+    folium_map = folium.Map(location=[avg_lat, avg_lon], zoom_start=12, tiles="CartoDB positron")
+    for _, row in df.iterrows():
+        lat = row["Latitude"]
+        lon = row["Longitude"]
+        stop_name = row.get("Stop Name", "Unknown Stop")
+        bus_id = row.get("Bus stop Number", "N/A")
+        status_val = row.get(status_col, "Unknown")
+
+        popup_html = f"""
+        <b>Stop Name:</b> {stop_name}<br>
+        <b>Bus stop Number:</b> {bus_id}<br>
+        <b>Status:</b> {status_val}
+        """
+        folium.Marker(
+            location=[lat, lon],
+            popup=popup_html,
+            tooltip=f"Bus ID: {bus_id}",
+            icon=folium.Icon(color=get_marker_color(status_val), icon="bus", prefix="fa")
+        ).add_to(folium_map)
+    return folium_map
+
+def create_map_esri_street(df, status_col):
+    if df.empty:
+        return folium.Map(location=[37.0, -95.0], zoom_start=4, tiles=None)
+    df = df.dropna(subset=["West [X]", "North [Y]"]).copy()
+    df["Longitude"] = -df["West [X]"]
+    df["Latitude"]  = df["North [Y]"]
+    avg_lat = df["Latitude"].mean()
+    avg_lon = df["Longitude"].mean()
+
+    folium_map = folium.Map(location=[avg_lat, avg_lon], zoom_start=12, tiles=None)
+    esri_tiles = folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri WorldStreetMap",
+        name="Esri WorldStreetMap",
+        overlay=False,
+        control=True
+    )
+    esri_tiles.add_to(folium_map)
+
+    for _, row in df.iterrows():
+        lat = row["Latitude"]
+        lon = row["Longitude"]
+        stop_name = row.get("Stop Name", "Unknown Stop")
+        bus_id = row.get("Bus stop Number", "N/A")
+        status_val = row.get(status_col, "Unknown")
+        popup_html = f"""
+        <b>Stop Name:</b> {stop_name}<br>
+        <b>Bus stop Number:</b> {bus_id}<br>
+        <b>Status:</b> {status_val}
+        """
+        folium.Marker(
+            location=[lat, lon],
+            popup=popup_html,
+            tooltip=f"Bus ID: {bus_id}",
+            icon=folium.Icon(color=get_marker_color(status_val), icon="bus", prefix="fa")
+        ).add_to(folium_map)
+
+    folium.LayerControl().add_to(folium_map)
+    return folium_map
+
+def create_map_esri_imagery(df, status_col):
+    if df.empty:
+        return folium.Map(location=[37.0, -95.0], zoom_start=4, tiles=None)
+    df = df.dropna(subset=["West [X]", "North [Y]"]).copy()
+    df["Longitude"] = -df["West [X]"]
+    df["Latitude"]  = df["North [Y]"]
+    avg_lat = df["Latitude"].mean()
+    avg_lon = df["Longitude"].mean()
+
+    folium_map = folium.Map(location=[avg_lat, avg_lon], zoom_start=12, tiles=None)
+    esri_imagery = folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri WorldImagery",
+        name="Esri WorldImagery",
+        overlay=False,
+        control=True
+    )
+    esri_imagery.add_to(folium_map)
+
+    for _, row in df.iterrows():
+        lat = row["Latitude"]
+        lon = row["Longitude"]
+        stop_name = row.get("Stop Name", "Unknown Stop")
+        bus_id = row.get("Bus stop Number", "N/A")
+        status_val = row.get(status_col, "Unknown")
+        popup_html = f"""
+        <b>Stop Name:</b> {stop_name}<br>
+        <b>Bus stop Number:</b> {bus_id}<br>
+        <b>Status:</b> {status_val}
+        """
+        folium.Marker(
+            location=[lat, lon],
+            popup=popup_html,
+            tooltip=f"Bus ID: {bus_id}",
+            icon=folium.Icon(color=get_marker_color(status_val), icon="bus", prefix="fa")
+        ).add_to(folium_map)
+
+    folium.LayerControl().add_to(folium_map)
+    return folium_map
+
+# -------------------------------------------------------------------------
+# 6) Horizontal bar chart with color-coded bars
+# -------------------------------------------------------------------------
+def create_status_chart(df, status_col):
+    status_counts = df[status_col].value_counts(dropna=False).reset_index()
+    status_counts.columns = ["Status", "Count"]
+
+    # Ensure "In Construction" is included
+    if "In Construction" not in status_counts["Status"].values:
+        extra_row = pd.DataFrame({"Status": ["In Construction"], "Count": [0]})
+        status_counts = pd.concat([status_counts, extra_row], ignore_index=True)
+
+    def chart_color_map(s):
+        s_lower = s.lower()
+        if "non-compliant" in s_lower:
+            return "red"
+        elif "incomplete" in s_lower:
+            return "orange"
+        elif "in construction" in s_lower:
+            return "blue"
+        else:
+            return "green"
+    status_counts["Color"] = status_counts["Status"].apply(chart_color_map)
+
+    chart = (
+        alt.Chart(status_counts)
+        .mark_bar()
+        .encode(
+            y=alt.Y("Status:N", sort=None, title="Status"),
+            x=alt.X("Count:Q", title="Count"),
+            color=alt.Color("Color:N", scale=None),
+            tooltip=["Status", "Count"]
+        )
+        .properties(width=700, height=300, title="Bus Stops by Status")
+    )
+    return chart
+
+# -------------------------------------------------------------------------
+# 7) Page Title
+# -------------------------------------------------------------------------
+st.title("GoTriangle Bus Stop Improvement Program")
+
+############################################################################
+# (A) ADD NEW FILTERS: Group Filter and Status Filter
+############################################################################
+
+# 1) Group Filter
+if "Group" in df.columns:  # ensure the column name is exactly "Group"
+    group_list = df["Group"].dropna().unique().tolist()
+    group_list = ["(All Groups)"] + group_list
+    selected_group = st.selectbox("Filter by Group:", group_list)
+else:
+    selected_group = "(All Groups)"  # fallback if "Group" col not found
+
+# 2) Multi-Select Status Filter
+status_list = df[status_col].dropna().unique().tolist()
+status_list.sort()
+selected_statuses = st.multiselect(
+    "Filter by Status (choose one or more):",
+    status_list,
+    default=status_list
+)
+
+# 3) Apply the filters to 'df' BEFORE building the bus stop dropdown
+df_filtered = df.copy()
+
+if selected_group != "(All Groups)" and "Group" in df.columns:
+    df_filtered = df_filtered[df_filtered["Group"] == selected_group]
+
+if selected_statuses:
+    df_filtered = df_filtered[df_filtered[status_col].isin(selected_statuses)]
+else:
+    df_filtered = df_filtered.iloc[0:0]
+
+############################################################################
+# (B) BUILD THE BUS STOP DROPDOWN in the SAME ORDER as in the Excel
+#     plus "Group" appended to the label
+############################################################################
+
+df_filtered["combined_label"] = (
+    df_filtered["Bus stop Number"].astype(str)
+    + " - "
+    + df_filtered["Stop Name"].astype(str)
+)
+
+if "Group" in df_filtered.columns:
+    df_filtered["combined_label"] = (
+        df_filtered["combined_label"]
+        + " - Group "
+        + df_filtered["Group"].astype(str)
+    )
+
+unique_labels_in_order = df_filtered["combined_label"].unique().tolist()
+all_labels_new = ["(Show All)"] + unique_labels_in_order
+
+selected_label = st.selectbox(
+    "Search for a bus stop (type partial ID or Name):",
+    all_labels_new
+)
+
+label_to_indices = {}
+for idx, row in df_filtered.iterrows():
+    label = row["combined_label"]
+    label_to_indices.setdefault(label, []).append(idx)
+
+if selected_label == "(Show All)":
+    df_map = df_filtered
+else:
+    idx_list = label_to_indices.get(selected_label, [])
+    df_map = df_filtered.loc[idx_list]
+
+# -------------------------------------------------------------------------
+# 8) Map Type Selection: Choose which base map to display
+# -------------------------------------------------------------------------
+map_options = ["OpenStreetMap", "CartoDB Positron", "ESRI WorldStreetMap", "ESRI WorldImagery"]
+selected_map_type = st.selectbox("Select the base map type:", map_options)
+
+if selected_map_type == "OpenStreetMap":
+    folium_map = create_map_osm(df_map, status_col)
+elif selected_map_type == "CartoDB Positron":
+    folium_map = create_map_cartodb(df_map, status_col)
+elif selected_map_type == "ESRI WorldStreetMap":
+    folium_map = create_map_esri_street(df_map, status_col)
+elif selected_map_type == "ESRI WorldImagery":
+    folium_map = create_map_esri_imagery(df_map, status_col)
+else:
+    folium_map = create_map_osm(df_map, status_col)  # Fallback
+
+# -------------------------------------------------------------------------
+# 9) Layout: Map and Pictures
+# -------------------------------------------------------------------------
+col_map, col_pics = st.columns([3, 2], gap="medium")
+with col_map:
+    st_folium(folium_map, width=700, height=550)
+
+# -------------------------------------------------------------------------
+# 10) Pictures Section
+# -------------------------------------------------------------------------
+if "pic_index" not in st.session_state:
+    st.session_state["pic_index"] = 0
+
+with col_pics:
+    st.subheader("Pictures")
+    if selected_label == "(Show All)":
+        st.write("Multiple stops selected. Please pick one bus stop to see pictures.")
+    else:
+        matched_indices = label_to_indices.get(selected_label, [])
+        if len(matched_indices) == 0:
+            st.write("No matching bus stop found.")
+        elif len(matched_indices) > 1:
+            st.write("Multiple stops match this name/ID. Please refine your selection.")
+        else:
+            row_index = matched_indices[0]
+            row = df_filtered.loc[row_index]
+            pics_str = str(row.get("Pictures", "")).strip()
+            if not pics_str:
+                st.write("No pictures available for this bus stop.")
+            else:
+                pic_urls = [x.strip() for x in pics_str.split(",")]
+                if not pic_urls:
+                    st.write("No pictures available for this bus stop.")
+                else:
+                    st.session_state["pic_index"] = min(
+                        st.session_state["pic_index"],
+                        len(pic_urls) - 1
+                    )
+                    current_pic_url = pic_urls[st.session_state["pic_index"]]
+                    try:
+                        # The built-in expand button is shown automatically
+                        # because we pass the URL directly to st.image().
+                        st.image(
+                            current_pic_url,
+                            width=350,
+                            caption=f"Image {st.session_state['pic_index']+1} of {len(pic_urls)}"
+                        )
+                    except Exception as e:
+                        st.error(f"Could not load image: {e}")
+                    st.markdown(f"""
+                        <a href="{current_pic_url}" download style="text-decoration:none; color:blue;">
+                            Download
+                        </a>
+                    """, unsafe_allow_html=True)
+                    col_btns = st.columns(2)
+                    with col_btns[0]:
+                        if st.button("Previous"):
+                            st.session_state["pic_index"] = (
+                                st.session_state["pic_index"] - 1
+                            ) % len(pic_urls)
+                    with col_btns[1]:
+                        if st.button("Next"):
+                            st.session_state["pic_index"] = (
+                                st.session_state["pic_index"] + 1
+                            ) % len(pic_urls)
+
+# -------------------------------------------------------------------------
+# 11) Status Chart
+# -------------------------------------------------------------------------
+st.markdown("### Status Chart")
+chart = create_status_chart(df_filtered, status_col)
+st.altair_chart(chart, use_container_width=False)
+
+# -------------------------------------------------------------------------
+# 12) Download a List of Bus Stops by Status
+# -------------------------------------------------------------------------
+st.markdown("### Download a List of Bus Stops by Status")
+
+download_status_options = ["Non-Compliant", "Incomplete", "In Construction"]
+download_selected_status = st.multiselect(
+    "Select one or more statuses to download as CSV:",
+    download_status_options
+)
+
+if download_selected_status:
+    df_to_download = df_filtered[df_filtered[status_col].str.lower().isin(
+        [s.lower() for s in download_selected_status]
+    )]
+
+    if df_to_download.empty:
+        st.warning("No bus stops found for the selected status(es).")
+    else:
+        csv_data = df_to_download.to_csv(index=False)
+        st.download_button(
+            label="Download CSV",
+            data=csv_data,
+            file_name="selected_status_bus_stops.csv",
+            mime="text/csv"
+        )
