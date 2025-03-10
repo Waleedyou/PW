@@ -21,7 +21,7 @@ jsonschema-specifications==2024.10.1
 MarkupSafe==3.0.2
 msal==1.31.1
 narwhals==1.29.1
-numpy==2.2.3
+numpy==1.26.4
 Office365-REST-Python-Client==2.5.14
 openpyxl==3.1.5
 packaging==24.2
